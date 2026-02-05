@@ -1,0 +1,353 @@
+
+<!doctype html>
+<html lang="hr">
+<head>
+  <meta charset="utf-8" />
+  <title>Kuda se kreće Đuro?</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #map { height: 100vh; width: 100vw; }
+
+    .badge {
+      position: absolute; z-index: 9999; top: 12px; left: 12px;
+      background: white; padding: 10px 12px; border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.15);
+      max-width: 560px;
+    }
+    .badge small { color: #444; display: block; line-height: 1.25; }
+    .tiny { font-size: 12px; color: #555; margin-top: 6px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    .controls {
+      margin-top: 10px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+
+    button {
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 10px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #f6f6f6; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .panel {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 6px 10px;
+      background: #fff;
+      font-size: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    input[type="range"] { width: 260px; }
+  </style>
+</head>
+
+<body>
+  <div class="badge">
+    <div><strong>Kuda se kreće Đuro?</strong></div>
+    <small>Podaci prikazani s odgodom.</small>
+    <p style="margin: 8px 0 0 0;">
+      Karta prikazuje kretanje Đure, mladog orla zmijara sa Telašćice, tijekom svoje prve selidbe. 
+      <br><br>Radi sigurnosti, stvarna lokacija gnijezda kao ni trenutna Đurina lokacija nisu prikazani.
+    </p>
+
+    <div id="status" class="tiny">Učitavanje…</div>
+
+    <div class="controls">
+      <button id="playBtn">▶ Pokreni</button>
+      <button id="pauseBtn" disabled>⏸ Pauziraj</button>
+      <button id="resetBtn" disabled>⟲ Resetiraj</button>
+
+      <div class="panel" title="Lijevo = sporije, desno = brže">
+        <span>Brzina</span>
+        <input id="speed" type="range" min="80" max="1500" value="650" step="10" />
+        <span class="tiny">ms/korak</span>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:10px;">
+      <span>Vremenska crta</span>
+      <input id="timeline" type="range" min="0" max="0" value="0" step="1" disabled />
+      <span id="timelineLabel" class="tiny mono">—</span>
+    </div>
+
+    <div class="tiny">
+      Ako se promjene ne vide odmah: osvježite s <span class="mono">?v=999</span> na kraju URL-a.
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script>
+    // Show JS errors in the status box too (huge help)
+    window.onerror = function (msg, src, line, col) {
+      const el = document.getElementById('status');
+      if (el) el.textContent = `JS greška: ${msg} (linija ${line})`;
+    };
+
+    // ====== STYLE YOU CAN EDIT ======
+    const TRACK_COLOR = "#2563eb";
+    const TRACK_WEIGHT = 4;
+
+    const POINT_STROKE = "#0f172a";
+    const POINT_FILL = "#22c55e";
+    const POINT_RADIUS = 4;
+
+    const MOVING_OUTLINE = "#ffffff";
+    const MOVING_FILL = "#ff0000";
+    const MOVING_RADIUS = 9;
+    // ===============================
+
+    // Map
+    const map = L.map('map');
+    map.setView([20, 0], 2);
+
+    // Basemaps
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    });
+
+    const esriSat = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri'
+    });
+
+    const openTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom: 17,
+      attribution: '&copy; OpenTopoMap (CC-BY-SA)'
+    });
+
+    // Default basemap = satellite
+    esriSat.addTo(map);
+
+    L.control.layers(
+      { "Satellite (Esri)": esriSat, "OpenStreetMap": osm, "Topo (OpenTopoMap)": openTopo },
+      {},
+      { collapsed: true }
+    ).addTo(map);
+
+    // State
+    let animTimer = null;
+    let animIndex = 0;
+    let animLatLngs = [];
+    let animTimes = [];
+    let movingMarker = null;
+
+    let pointsLayer = null;
+    let trackLine = null;
+    let areaLayer = null;
+
+    // UI
+    const statusEl = document.getElementById('status');
+    const playBtn = document.getElementById('playBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const speedEl = document.getElementById('speed');
+    const timelineEl = document.getElementById('timeline');
+    const timelineLabelEl = document.getElementById('timelineLabel');
+
+    function setStatus(t) { statusEl.textContent = t; }
+    function fmt(v) { return (v === null || v === undefined || v === "") ? "-" : String(v); }
+    function intervalMs() { return Number(speedEl.value || 650); }
+
+    function stopAnim() {
+      if (animTimer) { clearInterval(animTimer); animTimer = null; }
+      playBtn.disabled = (animLatLngs.length === 0);
+      pauseBtn.disabled = true;
+    }
+
+    function setIndex(i, opts) {
+      const pan = opts && opts.pan;
+      if (!movingMarker || animLatLngs.length === 0) return;
+
+      animIndex = Math.max(0, Math.min(animLatLngs.length - 1, i));
+      const latlng = animLatLngs[animIndex];
+      movingMarker.setLatLng(latlng);
+
+      const t = animTimes[animIndex] || "";
+      timelineEl.value = String(animIndex);
+      timelineLabelEl.textContent = t ? (t + " (UTC)") : "—";
+
+      if (t) {
+        movingMarker.bindTooltip(t, { permanent: false, direction: "top", offset: [0, -10] }).openTooltip();
+      }
+      if (pan) map.panTo(latlng, { animate: true });
+    }
+
+    function stepAnim() {
+      if (!movingMarker || animLatLngs.length === 0) return;
+      if (animIndex >= animLatLngs.length - 1) { stopAnim(); return; }
+      setIndex(animIndex + 1);
+    }
+
+    function startAnim() {
+      if (animLatLngs.length === 0) return;
+      stopAnim();
+      playBtn.disabled = true;
+      pauseBtn.disabled = false;
+      animTimer = setInterval(stepAnim, intervalMs());
+    }
+
+    function resetAnim() {
+      stopAnim();
+      setIndex(0, { pan: true });
+      resetBtn.disabled = (animLatLngs.length === 0);
+      playBtn.disabled = (animLatLngs.length === 0);
+      pauseBtn.disabled = true;
+    }
+
+    async function loadArea() {
+      const res = await fetch('./area.geojson', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Ne mogu učitati area.geojson (HTTP ${res.status})`);
+      const gj = await res.json();
+
+      if (areaLayer) areaLayer.remove();
+
+      areaLayer = L.geoJSON(gj, {
+        style: {
+          color: "#f97316",
+          weight: 2,
+          fillColor: "#f97316",
+          fillOpacity: 0.2
+        },
+        onEachFeature: (feature, layer) => {
+          const name =
+            (feature.properties && (feature.properties.name || feature.properties.NAME || feature.properties.Naziv)) ||
+            "Gnjezdilište";
+          layer.bindPopup(name);
+        },
+        pane: "overlayPane"
+      }).addTo(map);
+    }
+
+    async function loadTrack() {
+      setStatus("Učitavanje GeoJSON…");
+      const res = await fetch('./bird.geojson', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Ne mogu učitati bird.geojson (HTTP ${res.status})`);
+
+      const gj = await res.json();
+      const features = Array.isArray(gj.features) ? gj.features : [];
+
+      if (pointsLayer) pointsLayer.remove();
+      if (trackLine) trackLine.remove();
+      if (movingMarker) movingMarker.remove();
+      stopAnim();
+
+      setStatus(`GeoJSON učitan • točaka: ${features.length}`);
+
+      if (features.length === 0) {
+        animLatLngs = [];
+        animTimes = [];
+        timelineEl.disabled = true;
+        resetBtn.disabled = true;
+        playBtn.disabled = true;
+        pauseBtn.disabled = true;
+        timelineLabelEl.textContent = "—";
+        return;
+      }
+
+      pointsLayer = L.geoJSON(gj, {
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+          radius: POINT_RADIUS,
+          color: POINT_STROKE,
+          weight: 1,
+          fillColor: POINT_FILL,
+          fillOpacity: 0.9
+        }),
+        onEachFeature: (feature, layer) => {
+          const p = feature.properties || {};
+          const html =
+            "<strong>Vrijeme (UTC):</strong> " + fmt(p.UTC_dateti) + "<br/>"; 
+            /*
+            "<strong>Uređaj:</strong> " + fmt(p.device_id) + "<br/>" +
+            "<strong>Brzina (km/h):</strong> " + fmt(p.speed_km_h) + "<br/>" +
+            "<strong>Visina (m):</strong> " + fmt(p.Altitude_m) + "<br/>" +
+            "<strong>Temp:</strong> " + fmt(p.temperatur);
+            */
+          layer.bindPopup(html);
+        }
+      }).addTo(map);
+
+      const latlngs = features
+        .map(f => (f && f.geometry && f.geometry.type === "Point") ? f.geometry.coordinates : null)
+        .filter(c => Array.isArray(c) && c.length >= 2)
+        .map(c => [c[1], c[0]]);
+
+      if (latlngs.length >= 2) {
+        trackLine = L.polyline(latlngs, {
+          color: TRACK_COLOR,
+          weight: TRACK_WEIGHT,
+          opacity: 0.9
+        }).addTo(map);
+      }
+
+      const bounds = pointsLayer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds.pad(0.15));
+
+      animLatLngs = latlngs.slice();
+      animTimes = features.map(f => (f.properties || {}).UTC_dateti || "").slice(0, animLatLngs.length);
+
+      if (animLatLngs.length > 0) {
+        movingMarker = L.circleMarker(animLatLngs[0], {
+          radius: MOVING_RADIUS,
+          color: MOVING_OUTLINE,
+          weight: 3,
+          fillColor: MOVING_FILL,
+          fillOpacity: 1
+        }).addTo(map);
+
+        timelineEl.disabled = false;
+        timelineEl.min = "0";
+        timelineEl.max = String(animLatLngs.length - 1);
+        timelineEl.step = "1";
+
+        setIndex(0);
+
+        resetBtn.disabled = false;
+        playBtn.disabled = false;
+        pauseBtn.disabled = true;
+      }
+    }
+
+    // Controls
+    playBtn.addEventListener('click', startAnim);
+    pauseBtn.addEventListener('click', stopAnim);
+    resetBtn.addEventListener('click', resetAnim);
+
+    speedEl.addEventListener('input', () => {
+      if (animTimer) startAnim();
+    });
+
+    timelineEl.addEventListener('input', () => {
+      stopAnim();
+      setIndex(Number(timelineEl.value), { pan: true });
+    });
+
+    // Load layers
+    loadArea().catch(err => {
+      console.error(err);
+      setStatus(`Greška (area): ${err.message}`);
+    });
+
+    loadTrack().catch(err => {
+      console.error(err);
+      setStatus(`Greška (bird): ${err.message}`);
+    });
+  </script>
+</body>
+</html>
