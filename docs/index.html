@@ -272,7 +272,7 @@
         onEachFeature: (feature, layer) => {
           const p = feature.properties || {};
           const html =
-            "<strong>Vrijeme (UTC):</strong> " + fmt(p.UTC_dateti) + "<br/>"; 
+            "<strong>Vrijeme (UTC):</strong> " + fmt(p.UTC_datetime) + "<br/>"; 
             /*
             "<strong>Uređaj:</strong> " + fmt(p.device_id) + "<br/>" +
             "<strong>Brzina (km/h):</strong> " + fmt(p.speed_km_h) + "<br/>" +
@@ -300,7 +300,7 @@
       if (bounds.isValid()) map.fitBounds(bounds.pad(0.15));
 
       animLatLngs = latlngs.slice();
-      animTimes = features.map(f => (f.properties || {}).UTC_dateti || "").slice(0, animLatLngs.length);
+      animTimes = features.map(f => (f.properties || {}).UTC_datetime || "").slice(0, animLatLngs.length);
 
       if (animLatLngs.length > 0) {
         movingMarker = L.circleMarker(animLatLngs[0], {
