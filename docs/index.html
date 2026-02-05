@@ -180,7 +180,7 @@
 
       const t = animTimes[animIndex] || "";
       timelineEl.value = String(animIndex);
-      timelineLabelEl.textContent = t ? : "—";
+      timelineLabelEl.textContent = t ? t : "—";
 
       if (t) {
         movingMarker.bindTooltip(t, { permanent: false, direction: "top", offset: [0, -10] }).openTooltip();
