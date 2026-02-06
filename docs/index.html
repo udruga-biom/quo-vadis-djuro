@@ -236,7 +236,7 @@
 
     async function loadTrack() {
       setStatus("Učitavanje GeoJSON…");
-      const res = await fetch('./bird.geojson', { cache: 'no-store' });
+      const res = await fetch('./bird_alt.geojson', { cache: 'no-store' });
       if (!res.ok) throw new Error(`Ne mogu učitati bird.geojson (HTTP ${res.status})`);
 
       const gj = await res.json();
